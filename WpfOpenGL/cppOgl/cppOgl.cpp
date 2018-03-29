@@ -4,6 +4,8 @@
 #include "wglext.h"
 
 #include <vector>
+#include <memory>
+#include <atlimage.h>
 
 namespace
 {
@@ -143,9 +145,33 @@ namespace
         float y_;
     };
 
+    struct RGB24
+    {
+        RGB24()
+        {
+            rgb_[0] = 0;
+            rgb_[1] = 0;
+            rgb_[2] = 0;
+        }
+        unsigned char rgb_[3];
+    };
+
     struct Texture
     {
+        Texture(unsigned int width, unsigned int height)
+            : width_(width), height_(height)
+        {
+            bits_.insert(bits_.end(), width*height * 3, 0);
+        }
 
+        unsigned char* GetTexel(unsigned int x, unsigned int y)
+        {
+            return &bits_[((x * height_) + y)*3];
+        }
+
+        unsigned int width_;
+        unsigned int height_;
+        std::vector<unsigned char> bits_;
     };
 
     unsigned int CompileVertexShader(const std::string& sourceCode)
@@ -227,6 +253,25 @@ namespace
             OutputDebugString("Unable to find uniform location :(");
         else
             gl_->glUniform1i(location, ID);
+    }
+
+    std::shared_ptr<Texture> LoadTexture(const std::string& filename)
+    {
+        CImage image;
+        image.Load(filename.c_str());
+        std::shared_ptr<Texture> texture(new Texture(image.GetWidth(), image.GetHeight()));
+        for (int y = image.GetHeight() - 1; y >= 0; --y)
+        {
+            for (int x = 0; x < image.GetWidth(); ++x)
+            {
+                unsigned char* target = texture->GetTexel(x, y);
+                unsigned char* source = reinterpret_cast<unsigned char*>(image.GetPixelAddress(x, y));
+                for ( unsigned int c = 0; c < 3; ++c )
+                    *(target+c) = *(source+c);
+            }
+        }
+
+        return texture;
     }
 
 }
@@ -335,7 +380,14 @@ extern "C" __declspec(dllexport) int OpenGLInit(void* hdc)
     gl_->glBindVertexArray(NULL);
     
     // Load the texture...
+    std::shared_ptr<Texture> calibrationImage = LoadTexture("uvgrid.jpg");
 
+    glGenTextures(1, &calibrationTexture_);
+    glBindTexture(GL_TEXTURE_2D, calibrationTexture_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, calibrationImage->width_, calibrationImage->height_, 0, GL_RGB, GL_UNSIGNED_BYTE, &calibrationImage->bits_[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, NULL);
 
     // Compile the shaders
     const char* fragmentSource = R"(
@@ -347,7 +399,8 @@ extern "C" __declspec(dllexport) int OpenGLInit(void* hdc)
 
     void main()
     {
-        COLOUR = vec3(UV.st, 0);
+        //COLOUR = vec3(UV.st, 0);
+        COLOUR = texture(quadTexture, UV).bgr;
     }
     )";
 
@@ -389,6 +442,11 @@ extern "C" __declspec(dllexport) void OpenGLDraw(void* hdc, float rotation)
     gl_->glBindBuffer(GL_ARRAY_BUFFER, uvs_);
     gl_->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexes_);
 
+    // Assign the texture...
+    gl_->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, calibrationTexture_);
+    SetUniform("quadTexture", calibrationTexture_);
+
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
     gl_->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, NULL);
@@ -402,7 +460,7 @@ extern "C" __declspec(dllexport) void OpenGLResize(int width, int height)
 {
 	glViewport(0, 0, width, height);
 
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-	glOrtho(width / static_cast<float>(height), -width / static_cast<float>(height), -1.0f, 1.0f, 0.1f, 100.0f);
+	//glMatrixMode(GL_PROJECTION);
+	//glLoadIdentity();
+	//glOrtho(width / static_cast<float>(height), -width / static_cast<float>(height), -1.0f, 1.0f, 0.1f, 100.0f);
 }
